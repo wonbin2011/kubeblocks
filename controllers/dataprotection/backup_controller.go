@@ -801,6 +801,10 @@ func (r *BackupReconciler) doBaseBackupInProgressPhaseAction(reqCtx intctrlutil.
 	backup.Status.Phase = dataprotectionv1alpha1.BackupCompleted
 	backup.Status.CompletionTimestamp = &metav1.Time{Time: r.clock.Now().UTC()}
 
+	// update backup VolumeName because it is empty in the newAction
+	if err = r.updateBackupVolumeName(reqCtx, backup); err != nil {
+		return intctrlutil.ResultToP(r.updateStatusIfFailed(reqCtx, backup, err))
+	}
 	if backup.Spec.BackupType == dataprotectionv1alpha1.BackupTypeLogFile {
 		if backup.Status.Manifests != nil &&
 			backup.Status.Manifests.BackupLog != nil &&
@@ -809,6 +813,23 @@ func (r *BackupReconciler) doBaseBackupInProgressPhaseAction(reqCtx intctrlutil.
 		}
 	}
 	return nil, nil
+}
+
+func (r *BackupReconciler) updateBackupVolumeName(reqCtx intctrlutil.RequestCtx,
+	backup *dataprotectionv1alpha1.Backup) error {
+	if backup.Status.PersistentVolumeClaimName == "" || backup.Status.Manifests.BackupTool.VolumeName != "" {
+		return nil
+	}
+
+	pvc := &corev1.PersistentVolumeClaim{}
+	if err := r.Client.Get(reqCtx.Ctx, client.ObjectKey{Namespace: backup.Namespace,
+		Name: backup.Status.PersistentVolumeClaimName}, pvc); err != nil && !apierrors.IsNotFound(err) {
+		return err
+	}
+	if pvc.Name != "" && pvc.Spec.VolumeName != "" {
+		backup.Status.Manifests.BackupTool.VolumeName = pvc.Spec.VolumeName
+	}
+	return nil
 }
 
 func (r *BackupReconciler) doInRunningPhaseAction(
